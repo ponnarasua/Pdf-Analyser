@@ -1,21 +1,21 @@
-import os
+"""
+Gemini AI Service.
+Handles document type classification and structured text synthesis
+using Google's Gemini 2.5 Flash model.
+"""
 import json
+import logging
 import textwrap
 from typing import Callable, Awaitable
 
 import google.generativeai as genai
-from dotenv import load_dotenv
 
-from models.schemas import AnalysisResult, DocumentMetadata, TocEntry
-from services.document_processor import ProcessedDocument
+from app.core.config import settings
+from app.core.exceptions import AIAnalysisError, APIKeyMissingError
+from app.models.response import AnalysisResponse
+from app.services.pdf.extractor import ProcessedDocument
 
-load_dotenv()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Use gemini-2.5-flash — best for structured extraction with large contexts
-MODEL = "gemini-2.5-flash-preview-05-20"
+logger = logging.getLogger(__name__)
 
 CLASSIFICATION_TYPES = [
     "Research Paper",
@@ -32,11 +32,22 @@ CLASSIFICATION_TYPES = [
 
 
 class GeminiService:
-    def __init__(self):
-        self.model = genai.GenerativeModel(MODEL)
+    """
+    Interfaces with Google's Generative AI SDK.
+    Performs classification and detailed structural analysis.
+    """
+
+    def __init__(self) -> None:
+        if not settings.GEMINI_API_KEY:
+            logger.error("GEMINI_API_KEY environment variable is not set")
+            raise APIKeyMissingError()
+        
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        self.model = genai.GenerativeModel(settings.GEMINI_MODEL)
 
     async def classify_document(self, text_sample: str) -> str:
-        """Phase 4: Classify document type before deeper analysis."""
+        """Classifies the document type based on a text excerpt."""
+        logger.info("Classifying document type...")
         prompt = textwrap.dedent(f"""
             You are a document classification expert.
             
@@ -50,69 +61,44 @@ class GeminiService:
         """).strip()
 
         try:
-            response = self.model.generate_content(prompt)
+            # Note: genai SDK calls are currently sync. Running via asyncio run_in_executor
+            # is a good practice to avoid blocking the main event loop.
+            import asyncio
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.model.generate_content(prompt)
+            )
             doc_type = response.text.strip()
-            # Validate it's one of our known types
+            
             if doc_type in CLASSIFICATION_TYPES:
+                logger.info("Document classified as: %s", doc_type)
                 return doc_type
-            # Fuzzy fallback
+                
+            # Fuzzy match fallback
             for t in CLASSIFICATION_TYPES:
                 if t.lower() in doc_type.lower():
+                    logger.info("Fuzzy matched classification to: %s", t)
                     return t
+            logger.info("Defaulting classification to Other")
             return "Other"
-        except Exception:
+        except Exception as exc:
+            logger.warning("Document classification failed: %s. Defaulting to Other", exc)
             return "Other"
-
-    async def analyze_chunk(self, text: str, doc_type: str, chunk_num: int, total_chunks: int) -> dict:
-        """Analyze a single text chunk."""
-        prompt = textwrap.dedent(f"""
-            You are an expert document analyst. This is chunk {chunk_num} of {total_chunks} from a {doc_type}.
-
-            Analyze this text and respond with ONLY a valid JSON object with these fields:
-            - "summary": 2-3 sentence summary of this section
-            - "keyPoints": array of up to 5 key points from this section
-            - "topics": array of up to 5 main topics mentioned
-            - "keywords": array of up to 8 important keywords or technical terms
-
-            Text:
-            {text[:8000]}
-
-            Respond ONLY with a JSON object. No markdown, no explanation.
-        """).strip()
-
-        try:
-            response = self.model.generate_content(prompt)
-            raw = response.text.strip()
-            # Strip any markdown fences if model adds them
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            return json.loads(raw)
-        except Exception as e:
-            return {"summary": "", "keyPoints": [], "topics": [], "keywords": []}
 
     async def full_analysis(
         self,
         doc: ProcessedDocument,
         doc_type: str,
         status_callback: Callable[[str], Awaitable[None]] | None = None,
-    ) -> AnalysisResult:
+    ) -> AnalysisResponse:
         """
-        Run the full analysis pipeline:
-        - Classify (already done, passed in as doc_type)
-        - Chunk-aware analysis
-        - Image insights
-        - Table insights
-        - Final structured synthesis
+        Sends the sampled document contents, metadata and outline to Gemini
+        to generate a structured analysis summary, topics, and key insights.
         """
+        logger.info("Initiating full synthesis analysis with Gemini")
+        
+        # Build layout helper details for the prompt
+        pages_text = "\n\n".join(f"[Page {p.page}]\n{p.content}" for p in doc.pages[:80])
 
-        # Build page-structured text for the synthesis prompt
-        pages_text = "\n\n".join(
-            f"[Page {p.page}]\n{p.content}" for p in doc.pages[:80]
-        )
-
-        # Build context about images and tables
         image_context = ""
         if doc.images:
             image_context = f"\nDocument contains {doc.metadata.total_images} images across pages: " + \
@@ -155,46 +141,42 @@ class GeminiService:
             - imageInsights: infer what images likely contain based on surrounding text and context. If no images, return [].
             - tableInsights: infer what tables contain based on nearby text. If no tables, return [].
             - All fields must be present.
-            - Respond ONLY with the JSON object. No markdown fences.
+            - Respond ONLY with the JSON object. Do NOT wrap in markdown fences.
         """).strip()
 
         if status_callback:
-            await status_callback("Running AI analysis with Gemini...")
+            await status_callback("Synthesizing document insights with Gemini...")
 
         try:
-            response = self.model.generate_content(synthesis_prompt)
+            import asyncio
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.model.generate_content(synthesis_prompt)
+            )
             raw = response.text.strip()
+            
+            # Clean markdown code block wraps if the model added them
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
-            data = json.loads(raw)
-        except Exception as e:
-            # Fallback with minimal data
-            data = {
-                "title": doc.metadata.title or "Unknown",
-                "authors": doc.metadata.author or "Unknown",
-                "summary": "Unable to generate summary.",
-                "keyTakeaway": "Analysis failed. Please retry.",
-                "keywords": [],
-                "mainTopics": [],
-                "imageInsights": [],
-                "tableInsights": [],
-                "difficulty": doc.metadata.difficulty or "Intermediate",
-            }
+            
+            data = json.loads(raw.strip())
+        except Exception as exc:
+            logger.error("Gemini content generation or JSON decoding failed: %s", exc)
+            raise AIAnalysisError("Gemini failed to output valid structured analysis.") from exc
 
-        return AnalysisResult(
+        return AnalysisResponse(
             documentType=doc_type,
             title=data.get("title") or doc.metadata.title or "Unknown",
             authors=data.get("authors") or doc.metadata.author or "Unknown",
-            summary=data.get("summary", ""),
-            keyTakeaway=data.get("keyTakeaway", ""),
+            summary=data.get("summary") or "Unable to generate summary.",
+            keyTakeaway=data.get("keyTakeaway") or "Analysis succeeded with basic extraction.",
             keywords=data.get("keywords", [])[:10],
             mainTopics=data.get("mainTopics", [])[:6],
             imageInsights=data.get("imageInsights", [])[:5],
             tableInsights=data.get("tableInsights", [])[:5],
-            difficulty=data.get("difficulty", doc.metadata.difficulty or "Intermediate"),
-            estimatedReadingTime=doc.metadata.estimated_reading_time or "",
+            difficulty=data.get("difficulty") or doc.metadata.difficulty or "Intermediate",
+            estimatedReadingTime=doc.metadata.estimated_reading_time or "Unknown",
             toc=doc.toc,
             metadata=doc.metadata,
         )

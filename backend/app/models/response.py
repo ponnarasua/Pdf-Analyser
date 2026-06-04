@@ -1,9 +1,6 @@
-from pydantic import BaseModel
+"""Response models — what the API returns."""
 from typing import Optional
-
-
-class AnalyzeRequest(BaseModel):
-    pdf_url: str
+from pydantic import BaseModel
 
 
 class PageContent(BaseModel):
@@ -39,7 +36,8 @@ class DocumentMetadata(BaseModel):
     difficulty: Optional[str] = None
 
 
-class AnalysisResult(BaseModel):
+class AnalysisResponse(BaseModel):
+    """The complete structured analysis returned to the frontend."""
     documentType: str
     title: str
     authors: str

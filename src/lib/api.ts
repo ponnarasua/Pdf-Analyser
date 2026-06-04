@@ -1,7 +1,5 @@
-import { AnalysisResult, SSEMessage } from "@/types/analysis";
-
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { SSEMessage } from "@/types/analysis";
+import { BACKEND_URL } from "@/config/constants";
 
 /**
  * Streams the PDF analysis from the FastAPI backend via Server-Sent Events.
@@ -12,7 +10,7 @@ export async function streamAnalysis(
   onMessage: (msg: SSEMessage) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const response = await fetch(`${BACKEND_URL}/api/analyze`, {
+  const response = await fetch(`${BACKEND_URL}/api/v1/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pdf_url: pdfUrl }),

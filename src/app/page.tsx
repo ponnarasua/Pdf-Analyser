@@ -1,123 +1,31 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { streamAnalysis } from "@/services/api";
-import { AnalysisResult, Step, SSEMessage } from "@/types/analysis";
+import { useAnalysis } from "@/hooks/useAnalysis";
+import { QUICK_TESTS } from "@/config/constants";
 
-import StepProgress from "@/components/StepProgress";
-import SummaryCard from "@/components/SummaryCard";
-import MetadataPanel from "@/components/MetadataPanel";
-import TocPanel from "@/components/TocPanel";
-import VisualInsights from "@/components/VisualInsights";
-import TableInsights from "@/components/TableInsights";
-import KeywordsPanel from "@/components/KeywordsPanel";
+import StepProgress from "@/components/ui/StepProgress";
+import SummaryCard from "@/components/analysis/SummaryCard";
+import MetadataPanel from "@/components/analysis/MetadataPanel";
+import TocPanel from "@/components/analysis/TocPanel";
+import VisualInsights from "@/components/analysis/VisualInsights";
+import TableInsights from "@/components/analysis/TableInsights";
+import KeywordsPanel from "@/components/analysis/KeywordsPanel";
 
 import { Search, Zap, ExternalLink, FileText, RotateCcw } from "lucide-react";
 
-const INITIAL_STEPS: Step[] = [
-  { name: "Downloading PDF", status: "pending" },
-  { name: "Extracting Text", status: "pending" },
-  { name: "Detecting Tables & Images", status: "pending" },
-  { name: "AI Analysis", status: "pending" },
-  { name: "Finalizing", status: "pending" },
-];
-
-const QUICK_TESTS = [
-  {
-    label: "Attention Is All You Need",
-    url: "https://arxiv.org/pdf/1706.03762",
-    badge: "Research Paper",
-  },
-  {
-    label: "React.js Wikipedia",
-    url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-    badge: "Sample PDF",
-  },
-];
-
 export default function Home() {
-  const [pdfUrl, setPdfUrl] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const updateStep = (name: string, status: Step["status"]) => {
-    setSteps((prev) =>
-      prev.map((s) => (s.name === name ? { ...s, status } : s))
-    );
-  };
-
-  const handleAnalyze = async (urlToAnalyze?: string) => {
-    const target = (urlToAnalyze || pdfUrl).trim();
-    if (!target) {
-      setError("Please enter a PDF URL.");
-      return;
-    }
-
-    // Reset state
-    setIsLoading(true);
-    setError(null);
-    setResult(null);
-    setStatusMessage("");
-    setSteps(INITIAL_STEPS.map((s) => ({ ...s, status: "pending" })));
-
-    // Cancel any in-flight request
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    try {
-      await streamAnalysis(
-        target,
-        (msg: SSEMessage) => {
-          if (msg.type === "step") {
-            updateStep(msg.step, msg.status === "done" ? "done" : "active");
-            if (msg.status === "active") {
-              setStatusMessage(`Processing: ${msg.step}...`);
-            }
-          } else if (msg.type === "status") {
-            setStatusMessage(msg.message);
-          } else if (msg.type === "result") {
-            setResult(msg.data);
-            setSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
-            setStatusMessage("");
-          } else if (msg.type === "error") {
-            setError(msg.message);
-            setSteps((prev) =>
-              prev.map((s) => (s.status === "active" ? { ...s, status: "error" } : s))
-            );
-          }
-        },
-        abortRef.current.signal
-      );
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        setError(
-          err.message?.includes("fetch")
-            ? "Could not connect to the backend. Make sure the FastAPI server is running at http://localhost:8000."
-            : err.message || "An unexpected error occurred."
-        );
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleQuickTest = (url: string) => {
-    setPdfUrl(url);
-    handleAnalyze(url);
-  };
-
-  const handleReset = () => {
-    abortRef.current?.abort();
-    setIsLoading(false);
-    setResult(null);
-    setError(null);
-    setSteps(INITIAL_STEPS.map((s) => ({ ...s, status: "pending" })));
-    setStatusMessage("");
-  };
+  const {
+    pdfUrl,
+    setPdfUrl,
+    isLoading,
+    steps,
+    statusMessage,
+    result,
+    error,
+    handleAnalyze,
+    handleQuickTest,
+    handleReset,
+  } = useAnalysis();
 
   return (
     <div className="min-h-screen bg-[#080B12] text-white">
