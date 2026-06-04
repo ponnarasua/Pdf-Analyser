@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PDF.insight
 
-## Getting Started
+AI-powered PDF analyser — paste any public PDF URL and get a structured, multi-faceted analysis instantly.
 
-First, run the development server:
+## Architecture
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+frontend/   Next.js 15 + Tailwind + TypeScript   (Vercel)
+backend/    FastAPI + PyMuPDF + pdfplumber        (Render / local)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local Development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. Backend
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cd backend
+pip install -r requirements.txt
+```
 
-## Learn More
+Create a `.env` file in `backend/`:
+```
+GEMINI_API_KEY=your_gemini_key_here
+```
 
-To learn more about Next.js, take a look at the following resources:
+Start the server:
+```bash
+uvicorn main:app --reload
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Backend runs at: `http://localhost:8000`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. Frontend
 
-## Deploy on Vercel
+```bash
+npm install
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Create a `.env.local` file in the root:
+```
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+GEMINI_API_KEY=your_gemini_key_here  # (used by legacy /api/analyze route)
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Start the dev server:
+```bash
+npm run dev
+```
+
+Frontend runs at: `http://localhost:3000`
+
+## Features
+
+- 📥 Server-side PDF download and extraction
+- 🧠 Document classification (Research Paper, Resume, Invoice, etc.)
+- 📄 Full text extraction with PyMuPDF
+- 🖼️ Image detection and AI-described visual insights
+- 📊 Table detection and key findings extraction
+- 📑 TOC reconstruction from PDF structure
+- 🔀 Smart chunking strategy for large documents
+- ⏱️ Reading time & difficulty estimation
+- 🔑 Keywords and main topics
+- 🎯 Key takeaway and 2-3 sentence summary
+- 📡 Real-time Server-Sent Events (SSE) step progress
+- 🛡️ API key never exposed to the browser
+
+## Deployment
+
+### Frontend → Vercel
+Push to GitHub and import the repo on [vercel.com](https://vercel.com).
+Set env var `NEXT_PUBLIC_BACKEND_URL` to your deployed backend URL.
+
+### Backend → Render
+Create a new Web Service, point to `backend/` folder.
+Set env var `GEMINI_API_KEY`.
+Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
