@@ -1,7 +1,7 @@
 import { Step } from "@/types/analysis";
 
 export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+  (import.meta.env.VITE_BACKEND_URL as string) || "http://localhost:8000";
 
 export const INITIAL_STEPS: Step[] = [
   { name: "Downloading PDF", status: "pending" },

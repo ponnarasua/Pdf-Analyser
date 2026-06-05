@@ -221,7 +221,7 @@ export default function Home() {
         )}
 
         <footer className="pt-4 border-t border-white/5 text-center text-xs text-slate-700">
-          PDF.insight v2 · Next.js + FastAPI + Gemini 2.5 Flash
+          PDF.insight v2 · Vite + React + FastAPI + Gemini 2.5 Flash
         </footer>
       </div>
     </div>
