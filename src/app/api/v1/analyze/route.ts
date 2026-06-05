@@ -3,12 +3,29 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const dynamic = "force-dynamic";
 
+// Helper to verify if the buffer starts with the PDF magic bytes (%PDF-)
+const isPdfBuffer = (buf: Buffer): boolean => {
+  if (buf.length < 4) return false;
+  // %PDF magic bytes: 0x25 0x50 0x44 0x46
+  return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
+};
+
+// Helper to sanitize filenames to prevent path traversal or injection
+const sanitizeFilename = (name: string): string => {
+  if (!name) return "document.pdf";
+  return name
+    .replace(/[^a-zA-Z0-9.\-_]/g, "_") // replace unsafe characters with underscores
+    .substring(0, 100); // limit length to 100 characters
+};
+
 export async function POST(request: NextRequest) {
   try {
-    const { pdf_url } = await request.json();
-    if (!pdf_url) {
+    const body = await request.json();
+    const { pdf_url, pdf_base64, filename } = body;
+
+    if (!pdf_url && !pdf_base64) {
       return new Response(
-        JSON.stringify({ type: "error", message: "pdf_url is required." }),
+        JSON.stringify({ type: "error", message: "Either pdf_url or pdf_base64 is required." }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -22,51 +39,100 @@ export async function POST(request: NextRequest) {
         };
 
         try {
-          // --- Step 1: Downloading PDF ---
-          sendEvent({ type: "step", step: "Downloading PDF", status: "active" });
-          
-          let pdfResponse;
-          try {
-            pdfResponse = await fetch(pdf_url, {
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              },
-            });
-          } catch (err: any) {
-            sendEvent({ type: "error", message: `Network error downloading PDF: ${err.message || err}` });
-            controller.close();
-            return;
+          let buffer: Buffer;
+          let activeFilename = "document.pdf";
+          let sourceMode = "url";
+
+          if (pdf_url) {
+            sourceMode = "url";
+            // --- Step 1: Downloading PDF ---
+            sendEvent({ type: "step", step: "Downloading PDF", status: "active" });
+            
+            const trimmedUrl = pdf_url.trim();
+            if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+              sendEvent({ type: "error", message: "Invalid URL. Must start with http:// or https://" });
+              controller.close();
+              return;
+            }
+
+            let pdfResponse;
+            try {
+              pdfResponse = await fetch(trimmedUrl, {
+                headers: {
+                  "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                },
+              });
+            } catch (err: any) {
+              sendEvent({ type: "error", message: `Network error downloading PDF: ${err.message || err}` });
+              controller.close();
+              return;
+            }
+
+            if (!pdfResponse.ok) {
+              sendEvent({
+                type: "error",
+                message: `Download failed: Server returned ${pdfResponse.status} ${pdfResponse.statusText}`,
+              });
+              controller.close();
+              return;
+            }
+
+            const arrayBuffer = await pdfResponse.arrayBuffer();
+            buffer = Buffer.from(arrayBuffer);
+            activeFilename = sanitizeFilename(trimmedUrl.split("/").pop() || "download.pdf");
+
+            // Verify size limit for URL mode (25MB)
+            if (buffer.length > 25 * 1024 * 1024) {
+              sendEvent({ type: "error", message: "PDF is too large (max 25 MB)." });
+              controller.close();
+              return;
+            }
+
+            sendEvent({ type: "step", step: "Downloading PDF", status: "done" });
+          } else {
+            sourceMode = "upload";
+            // --- Step 1: Processing Uploaded PDF ---
+            sendEvent({ type: "step", step: "Downloading PDF", status: "active" }); // keep step name same for frontend compatibility
+            
+            try {
+              buffer = Buffer.from(pdf_base64, "base64");
+            } catch (err) {
+              sendEvent({ type: "error", message: "Invalid base64 payload. Failed to decode file." });
+              controller.close();
+              return;
+            }
+
+            // Verify size limit for direct upload (Vercel limit safety, 4.5MB payload limit)
+            if (buffer.length > 4.5 * 1024 * 1024) {
+              sendEvent({ type: "error", message: "Uploaded PDF exceeds Vercel's 4.5MB limit. Please use the URL option instead." });
+              controller.close();
+              return;
+            }
+
+            activeFilename = sanitizeFilename(filename);
+            await new Promise((r) => setTimeout(r, 400)); // brief pause for visual indicator consistency
+            sendEvent({ type: "step", step: "Downloading PDF", status: "done" });
           }
 
-          if (!pdfResponse.ok) {
+          // --- Strict Format Sanitization / Magic Byte Check ---
+          if (!isPdfBuffer(buffer)) {
             sendEvent({
               type: "error",
-              message: `Download failed: Server returned ${pdfResponse.status} ${pdfResponse.statusText}`,
+              message: "Format verification failed. The file is not a valid PDF document (missing %PDF header).",
             });
             controller.close();
             return;
           }
-
-          const arrayBuffer = await pdfResponse.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-
-          if (buffer.length > 25 * 1024 * 1024) { // 25 MB limit
-            sendEvent({ type: "error", message: "PDF is too large (max 25 MB)." });
-            controller.close();
-            return;
-          }
-
-          sendEvent({ type: "step", step: "Downloading PDF", status: "done" });
 
           // --- Step 2: Extracting Text ---
           sendEvent({ type: "step", step: "Extracting Text", status: "active" });
-          await new Promise((r) => setTimeout(r, 600)); // visual pause
+          await new Promise((r) => setTimeout(r, 600));
           sendEvent({ type: "step", step: "Extracting Text", status: "done" });
 
           // --- Step 3: Detecting Tables & Images ---
           sendEvent({ type: "step", step: "Detecting Tables & Images", status: "active" });
-          await new Promise((r) => setTimeout(r, 500)); // visual pause
+          await new Promise((r) => setTimeout(r, 500));
 
           // Attempt to extract page count from PDF binary structure
           let pageCount = 0;
@@ -110,16 +176,16 @@ export async function POST(request: NextRequest) {
           const genAI = new GoogleGenerativeAI(apiKey);
           const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-          sendEvent({ type: "status", message: "Uploading PDF to Gemini and analyzing..." });
+          sendEvent({ type: "status", message: `Analyzing ${activeFilename} with Gemini...` });
 
-          const pdfBase64 = buffer.toString("base64");
+          const pdfBase64Data = buffer.toString("base64");
 
           const prompt = `Analyze this PDF document and generate structured insights.
 Return a valid JSON object matching the requested schema.
 
 Extract:
-- title: title of the document
-- authors: author names (as a single string)
+- title: title of the document. If it is an invoice or resume, return the client name or candidate name.
+- authors: author names (as a single string). If none, state organization or Unknown.
 - summary: 2-3 sentences summarizing the entire document
 - keyTakeaway: the single most important takeaway
 - keywords: 5-10 key terms
@@ -127,7 +193,8 @@ Extract:
 - imageInsights: up to 5 insights about figures/visual elements present (if any, else empty list)
 - tableInsights: up to 5 insights about tables/data present (if any, else empty list)
 - difficulty: "Beginner", "Intermediate", or "Advanced" based on readability
-- estimatedReadingTime: estimate based on length (e.g. '12 min')`;
+- estimatedReadingTime: estimate based on length (e.g. '12 min')
+- documentType: The category of document (e.g. Research Paper, Technical Report, Article, Invoice, User Manual, Resume, Slide Deck, Book Chapter, etc.)`;
 
           const result = await model.generateContent({
             contents: [
@@ -137,7 +204,7 @@ Extract:
                   {
                     inlineData: {
                       mimeType: "application/pdf",
-                      data: pdfBase64,
+                      data: pdfBase64Data,
                     },
                   },
                   {

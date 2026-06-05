@@ -3,8 +3,28 @@ import { streamAnalysis } from "@/lib/api";
 import { AnalysisResult, Step, SSEMessage } from "@/types/analysis";
 import { INITIAL_STEPS } from "@/config/constants";
 
+const readFileAsBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        const base64 = reader.result.split(",")[1];
+        resolve(base64);
+      } else {
+        reject(new Error("Failed to read file as base64 string."));
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+};
+
 export function useAnalysis() {
+  const [inputMode, setInputMode] = useState<"url" | "upload">("url");
   const [pdfUrl, setPdfUrl] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
   const [statusMessage, setStatusMessage] = useState("");
@@ -26,16 +46,43 @@ export function useAnalysis() {
   };
 
   const handleAnalyze = async (urlToAnalyze?: string) => {
-    const target = (urlToAnalyze || pdfUrl).trim();
-    if (!target) {
-      setError("Please enter a PDF URL.");
-      return;
+    let payload: { pdf_url?: string; pdf_base64?: string; filename?: string } = {};
+
+    if (urlToAnalyze || inputMode === "url") {
+      const targetUrl = (urlToAnalyze || pdfUrl).trim();
+      if (!targetUrl) {
+        setError("Please enter a PDF URL.");
+        return;
+      }
+      payload = { pdf_url: targetUrl };
+    } else {
+      if (!selectedFile) {
+        setError("Please select or drop a local PDF file first.");
+        return;
+      }
+      if (selectedFile.size > 4.5 * 1024 * 1024) {
+        setError("File size exceeds 4.5MB limit. Please upload a smaller file or use the URL mode.");
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
+      setResult(null);
+      setStatusMessage("Reading local file contents...");
+      
+      try {
+        const base64 = await readFileAsBase64(selectedFile);
+        payload = { pdf_base64: base64, filename: selectedFile.name };
+      } catch (err: any) {
+        setError(`Failed to read file: ${err.message || err}`);
+        setIsLoading(false);
+        return;
+      }
     }
 
     setIsLoading(true);
     setError(null);
     setResult(null);
-    setStatusMessage("");
+    setStatusMessage("Connecting to analysis stream...");
     setSteps(INITIAL_STEPS.map((s) => ({ ...s, status: "pending" })));
 
     // Cancel any current request
@@ -44,7 +91,7 @@ export function useAnalysis() {
 
     try {
       await streamAnalysis(
-        target,
+        payload,
         (msg: SSEMessage) => {
           if (msg.type === "step") {
             updateStep(msg.step, msg.status === "done" ? "done" : "active");
@@ -70,11 +117,7 @@ export function useAnalysis() {
       );
     } catch (err: any) {
       if (err.name !== "AbortError") {
-        setError(
-          err.message?.includes("fetch")
-            ? "Could not connect to the backend. Make sure the FastAPI server is running at http://localhost:8000."
-            : err.message || "An unexpected error occurred."
-        );
+        setError(err.message || "An unexpected connection error occurred.");
       }
     } finally {
       setIsLoading(false);
@@ -82,6 +125,7 @@ export function useAnalysis() {
   };
 
   const handleQuickTest = (url: string) => {
+    setInputMode("url");
     setPdfUrl(url);
     handleAnalyze(url);
   };
@@ -93,11 +137,20 @@ export function useAnalysis() {
     setError(null);
     setSteps(INITIAL_STEPS.map((s) => ({ ...s, status: "pending" })));
     setStatusMessage("");
+    setPdfUrl("");
+    setSelectedFile(null);
+    setFileError(null);
   };
 
   return {
+    inputMode,
+    setInputMode,
     pdfUrl,
     setPdfUrl,
+    selectedFile,
+    setSelectedFile,
+    fileError,
+    setFileError,
     isLoading,
     steps,
     statusMessage,

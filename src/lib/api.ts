@@ -6,14 +6,14 @@ import { BACKEND_URL } from "@/config/constants";
  * Calls onMessage for each SSE event received.
  */
 export async function streamAnalysis(
-  pdfUrl: string,
+  payload: { pdf_url?: string; pdf_base64?: string; filename?: string },
   onMessage: (msg: SSEMessage) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const response = await fetch(`${BACKEND_URL}/api/v1/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pdf_url: pdfUrl }),
+    body: JSON.stringify(payload),
     signal,
   });
 
