@@ -186,7 +186,7 @@ Return a valid JSON object matching the requested schema.
 Extract:
 - title: title of the document. If it is an invoice or resume, return the client name or candidate name.
 - authors: author names (as a single string). If none, state organization or Unknown.
-- summary: 2-3 sentences summarizing the entire document
+- summary: A detailed, comprehensive summary of the entire document (typically 2-3 paragraphs, around 150-250 words), describing the context, primary methodologies/approaches, and core conclusions.
 - keyTakeaway: the single most important takeaway
 - keywords: 5-10 key terms
 - mainTopics: 3-6 main topics discussed

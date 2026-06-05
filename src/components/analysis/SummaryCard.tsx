@@ -20,7 +20,7 @@ export default function SummaryCard({ result }: SummaryCardProps) {
             Summary
           </h3>
         </div>
-        <p className="text-slate-200 leading-relaxed text-sm border-l-2 border-indigo-500/60 pl-4">
+        <p className="text-slate-200 leading-relaxed text-sm border-l-2 border-indigo-500/60 pl-4 whitespace-pre-line">
           {result.summary}
         </p>
       </div>
