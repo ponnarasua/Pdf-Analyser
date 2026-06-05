@@ -3,11 +3,40 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 export const dynamic = "force-dynamic";
 
-// Helper to verify if the buffer starts with the PDF magic bytes (%PDF-)
-const isPdfBuffer = (buf: Buffer): boolean => {
-  if (buf.length < 4) return false;
-  // %PDF magic bytes: 0x25 0x50 0x44 0x46
-  return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46;
+// Helper to verify MIME type from file headers (magic bytes) or filename extension
+const getMimeType = (buf: Buffer, filename: string): string => {
+  if (buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
+    return "application/pdf";
+  }
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+    return "image/png";
+  }
+  // JPEG: FF D8 FF
+  if (buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
+    return "image/jpeg";
+  }
+  // WEBP: RIFF....WEBP
+  if (buf.length >= 12 &&
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
+    return "image/webp";
+  }
+
+  // Fallback to filename extension
+  const ext = filename.toLowerCase().split(".").pop();
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+
+  return "";
+};
+
+// Helper to check if PDF is password-protected (encrypted)
+const isPdfEncrypted = (buf: Buffer): boolean => {
+  const str = buf.toString("binary");
+  return str.includes("/Encrypt");
 };
 
 // Helper to sanitize filenames to prevent path traversal or injection
@@ -31,7 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     const encoder = new TextEncoder();
-    
+
     const stream = new ReadableStream({
       async start(controller) {
         const sendEvent = (data: any) => {
@@ -47,7 +76,7 @@ export async function POST(request: NextRequest) {
             sourceMode = "url";
             // --- Step 1: Downloading PDF ---
             sendEvent({ type: "step", step: "Downloading PDF", status: "active" });
-            
+
             const trimmedUrl = pdf_url.trim();
             if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
               sendEvent({ type: "error", message: "Invalid URL. Must start with http:// or https://" });
@@ -94,7 +123,7 @@ export async function POST(request: NextRequest) {
             sourceMode = "upload";
             // --- Step 1: Processing Uploaded PDF ---
             sendEvent({ type: "step", step: "Downloading PDF", status: "active" }); // keep step name same for frontend compatibility
-            
+
             try {
               buffer = Buffer.from(pdf_base64, "base64");
             } catch (err) {
@@ -116,10 +145,20 @@ export async function POST(request: NextRequest) {
           }
 
           // --- Strict Format Sanitization / Magic Byte Check ---
-          if (!isPdfBuffer(buffer)) {
+          const mimeType = getMimeType(buffer, activeFilename);
+          if (mimeType !== "application/pdf") {
             sendEvent({
               type: "error",
               message: "Format verification failed. The file is not a valid PDF document (missing %PDF header).",
+            });
+            controller.close();
+            return;
+          }
+
+          if (isPdfEncrypted(buffer)) {
+            sendEvent({
+              type: "error",
+              message: "This PDF is password-protected (encrypted). Please remove the password protection or decrypt the file before uploading.",
             });
             controller.close();
             return;
@@ -135,7 +174,7 @@ export async function POST(request: NextRequest) {
           await new Promise((r) => setTimeout(r, 500));
 
           // Attempt to extract page count from PDF binary structure
-          let pageCount = 0;
+          let pageCount = 1;
           try {
             const pdfText = buffer.toString("binary");
             const match = pdfText.match(/\/Count\s+(\d+)/);
@@ -156,12 +195,31 @@ export async function POST(request: NextRequest) {
             images: 0,
             tables: 0,
           });
-          
+
           sendEvent({ type: "step", step: "Detecting Tables & Images", status: "done" });
 
           // --- Step 4: AI Analysis ---
           sendEvent({ type: "step", step: "AI Analysis", status: "active" });
-          sendEvent({ type: "status", message: "Initializing Gemini model..." });
+          sendEvent({ type: "status", message: "Analyzing document structure..." });
+
+          // Heuristic: Check if the PDF has a digital text layer
+          const pdfTextContent = buffer.toString("utf8");
+          const wordMatches = pdfTextContent.match(/[a-zA-Z]{4,}/g);
+          const textWordCount = wordMatches ? wordMatches.length : 0;
+
+          let preferredModel = "gemini-2.5-flash";
+          let routingReason = "";
+
+          if (textWordCount < 150) {
+            preferredModel = "gemini-3.5-flash";
+            routingReason = "Scanned document or ID card detected. Assigning to Gemini 3.5 Flash for advanced visual OCR.";
+          } else {
+            preferredModel = "gemini-2.5-flash";
+            routingReason = "Text-rich document detected. Assigning to Gemini 2.5 Flash to optimize processing.";
+          }
+
+          sendEvent({ type: "status", message: routingReason });
+          await new Promise((r) => setTimeout(r, 800)); // short pause for visual confirmation
 
           const apiKey = process.env.GEMINI_API_KEY;
           if (!apiKey) {
@@ -174,103 +232,162 @@ export async function POST(request: NextRequest) {
           }
 
           const genAI = new GoogleGenerativeAI(apiKey);
-          const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
 
-          sendEvent({ type: "status", message: `Analyzing ${activeFilename} with Gemini...` });
+          // Build trial order: preferred model first, then fallbacks
+          const modelsToTry = [preferredModel];
+          const allModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
+          for (const m of allModels) {
+            if (!modelsToTry.includes(m)) {
+              modelsToTry.push(m);
+            }
+          }
+
+          let result = null;
+          let activeModelUsed = "";
 
           const pdfBase64Data = buffer.toString("base64");
 
-          const prompt = `Analyze this PDF document and generate structured insights.
-Return a valid JSON object matching the requested schema.
+          const prompt = `You are a world-class multimodal document analysis engine.
+Analyze the provided document (PDF or image file) and generate comprehensive, structured insights.
 
-Extract:
-- title: title of the document. If it is an invoice or resume, return the client name or candidate name.
-- authors: author names (as a single string). If none, state organization or Unknown.
-- summary: A detailed, comprehensive summary of the entire document (typically 2-3 paragraphs, around 150-250 words), describing the context, primary methodologies/approaches, and core conclusions.
-- keyTakeaway: the single most important takeaway
-- keywords: 5-10 key terms
-- mainTopics: 3-6 main topics discussed
-- imageInsights: up to 5 insights about figures/visual elements present (if any, else empty list)
-- tableInsights: up to 5 insights about tables/data present (if any, else empty list)
-- difficulty: "Beginner", "Intermediate", or "Advanced" based on readability
-- estimatedReadingTime: estimate based on length (e.g. '12 min')
-- wordCount: estimate of the total word count of the document (integer)
-- documentType: The category of document (e.g. Research Paper, Technical Report, Article, Invoice, User Manual, Resume, Slide Deck, Book Chapter, etc.)
-- additionalInsights: list of up to 5 additional interesting, unique, or extra findings/observations in the document (such as funding notes, future work, limitations, specific dataset links, or unique historical context) that are not covered in other sections. Return an empty list if none.`;
+--- INPUT PROCESSING INSTRUCTIONS ---
+- If the document is a scanned copy, photo, ID card, certificate, marksheet, or academic record, use visual OCR capabilities to read and extract all textual and tabular details.
+- Provide highly precise extractions. Do not invent details; report exactly what is present.
 
-          const result = await model.generateContent({
-            contents: [
-              {
-                role: "user",
-                parts: [
+--- REQUIRED OUTPUT JSON FIELDS (ORDERED LOGICALLY) ---
+
+1. IDENTITY & CLASSIFICATION:
+   - "documentType": The classification of the document (e.g. Marksheet, Academic Transcript, Research Paper, Invoice, Resume, User Manual, Identity Card, Certificate, Slide Deck, etc.).
+   - "title": The title of the document. If it is an ID card, marksheet, certificate, invoice, or resume, extract the name of the subject (e.g. candidate name, student name, client name), register/roll number, or issuer.
+   - "authors": The author(s), publisher, or issuing institution (as a single string). If none, state the university, school, organization, or Unknown.
+
+2. SYNTHESIZED INSIGHTS:
+   - "summary": A detailed summary of the entire document. For reports/papers, write 2-3 paragraphs (150-250 words). For ID cards, marksheets, certificates, or transcripts, write a detailed breakdown of the credentials, grades, marks, subjects, and verification details.
+   - "keyTakeaway": The single most important takeaway (e.g. cumulative GPA, degree qualification, certification status, main conclusion, or critical finding).
+
+3. CONTENT CATEGORIZATION:
+   - "keywords": 5-10 key terms (e.g. course names, subjects, registration IDs, course codes).
+   - "mainTopics": 3-6 core topics discussed (e.g. semester results, personal details, academic grades).
+
+4. DATA & VISUAL EXTRACTION:
+   - "tableInsights": Up to 5 key findings or data points extracted from tables (e.g. subject-wise marks, semester GPA breakdowns, grade tables). Return an empty list if no tables are present.
+   - "imageInsights": Up to 5 insights about figures, charts, photos, or visual elements present. Return an empty list if none.
+
+5. METRICS & READABILITY:
+   - "difficulty": "Beginner", "Intermediate", or "Advanced" based on readability and complexity.
+   - "estimatedReadingTime": Estimated reading/review time (e.g. '12 min', or '1 min' for cards/transcripts).
+   - "wordCount": Approximate word count of the entire document (integer).
+
+6. EXTRA OBSERVATIONS:
+   - "additionalInsights": Up to 5 unique observations not covered elsewhere (e.g. passing criteria, graduation dates, signatures, seal details, dataset links). Return an empty list if none.
+
+--- FORMATTING CONSTRAINT ---
+Generate a single, valid JSON object matching the requested schema. Ensure all fields are fully populated according to the rules above.`;
+
+          for (const modelName of modelsToTry) {
+            try {
+              sendEvent({ type: "status", message: `Analyzing ${activeFilename} with ${modelName}...` });
+              const model = genAI.getGenerativeModel({ model: modelName });
+              result = await model.generateContent({
+                contents: [
                   {
-                    inlineData: {
-                      mimeType: "application/pdf",
-                      data: pdfBase64Data,
-                    },
-                  },
-                  {
-                    text: prompt,
+                    role: "user",
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: mimeType,
+                          data: pdfBase64Data,
+                        },
+                      },
+                      {
+                        text: prompt,
+                      },
+                    ],
                   },
                 ],
-              },
-            ],
-            generationConfig: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  title: { type: SchemaType.STRING },
-                  authors: { type: SchemaType.STRING },
-                  summary: { type: SchemaType.STRING },
-                  keyTakeaway: { type: SchemaType.STRING },
-                  keywords: {
-                    type: SchemaType.ARRAY,
-                    items: { type: SchemaType.STRING },
-                  },
-                  mainTopics: {
-                    type: SchemaType.ARRAY,
-                    items: { type: SchemaType.STRING },
-                  },
-                  imageInsights: {
-                    type: SchemaType.ARRAY,
-                    items: { type: SchemaType.STRING },
-                  },
-                  tableInsights: {
-                    type: SchemaType.ARRAY,
-                    items: { type: SchemaType.STRING },
-                  },
-                  difficulty: {
-                    type: SchemaType.STRING,
-                    format: "enum",
-                    enum: ["Beginner", "Intermediate", "Advanced"],
-                  },
-                  estimatedReadingTime: { type: SchemaType.STRING },
-                  wordCount: { type: SchemaType.INTEGER },
-                  documentType: { type: SchemaType.STRING },
-                  additionalInsights: {
-                    type: SchemaType.ARRAY,
-                    items: { type: SchemaType.STRING },
+                generationConfig: {
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                    type: SchemaType.OBJECT,
+                    properties: {
+                      title: { type: SchemaType.STRING },
+                      authors: { type: SchemaType.STRING },
+                      summary: { type: SchemaType.STRING },
+                      keyTakeaway: { type: SchemaType.STRING },
+                      keywords: {
+                        type: SchemaType.ARRAY,
+                        items: { type: SchemaType.STRING },
+                      },
+                      mainTopics: {
+                        type: SchemaType.ARRAY,
+                        items: { type: SchemaType.STRING },
+                      },
+                      imageInsights: {
+                        type: SchemaType.ARRAY,
+                        items: { type: SchemaType.STRING },
+                      },
+                      tableInsights: {
+                        type: SchemaType.ARRAY,
+                        items: { type: SchemaType.STRING },
+                      },
+                      difficulty: {
+                        type: SchemaType.STRING,
+                        format: "enum",
+                        enum: ["Beginner", "Intermediate", "Advanced"],
+                      },
+                      estimatedReadingTime: { type: SchemaType.STRING },
+                      wordCount: { type: SchemaType.INTEGER },
+                      documentType: { type: SchemaType.STRING },
+                      additionalInsights: {
+                        type: SchemaType.ARRAY,
+                        items: { type: SchemaType.STRING },
+                      },
+                    },
+                    required: [
+                      "title",
+                      "authors",
+                      "summary",
+                      "keyTakeaway",
+                      "keywords",
+                      "mainTopics",
+                      "imageInsights",
+                      "tableInsights",
+                      "difficulty",
+                      "estimatedReadingTime",
+                      "wordCount",
+                      "documentType",
+                      "additionalInsights",
+                    ],
                   },
                 },
-                required: [
-                  "title",
-                  "authors",
-                  "summary",
-                  "keyTakeaway",
-                  "keywords",
-                  "mainTopics",
-                  "imageInsights",
-                  "tableInsights",
-                  "difficulty",
-                  "estimatedReadingTime",
-                  "wordCount",
-                  "documentType",
-                  "additionalInsights",
-                ],
-              },
-            },
-          });
+              });
+              activeModelUsed = modelName;
+              break;
+            } catch (err: any) {
+              const errMsg = err.message || String(err);
+              const isQuotaOrServerErr =
+                errMsg.includes("429") ||
+                errMsg.includes("503") ||
+                errMsg.includes("quota") ||
+                errMsg.includes("limit") ||
+                errMsg.includes("Service Unavailable") ||
+                errMsg.includes("Too Many Requests");
+
+              if (isQuotaOrServerErr && modelName !== modelsToTry[modelsToTry.length - 1]) {
+                sendEvent({
+                  type: "status",
+                  message: `${modelName} experienced limit/quota restrictions. Retrying with fallback model...`,
+                });
+                continue;
+              } else {
+                throw err;
+              }
+            }
+          }
+
+          if (!result) {
+            throw new Error("Failed to get response from any Gemini model.");
+          }
 
           sendEvent({ type: "status", message: "Synthesizing final dashboard format..." });
 

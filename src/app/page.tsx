@@ -100,7 +100,7 @@ export default function Home() {
                 PDF.insight
               </span>
               <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 tracking-wider uppercase">
-                Gemini 3.5 Flash
+                Gemini AI
               </span>
             </div>
             <p className="text-sm text-slate-500 max-w-md">
