@@ -60,8 +60,8 @@ export function useAnalysis() {
         setError("Please select or drop a local PDF file first.");
         return;
       }
-      if (selectedFile.size > 4.5 * 1024 * 1024) {
-        setError("File size exceeds 4.5MB limit. Please upload a smaller file or use the URL mode.");
+      if (selectedFile.size > 20 * 1024 * 1024) {
+        setError("File size exceeds 20MB limit. Please upload a smaller file or use the URL mode.");
         return;
       }
       setIsLoading(true);

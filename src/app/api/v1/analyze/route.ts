@@ -1,42 +1,47 @@
 import { NextRequest } from "next/server";
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import dns from "dns";
+import { isEncrypted } from "@pdfsmaller/pdf-decrypt";
 
 export const dynamic = "force-dynamic";
 
-// Helper to verify MIME type from file headers (magic bytes) or filename extension
+// Helper to check if an IP belongs to private/local/reserved ranges (SSRF prevention)
+const isPrivateIp = (ip: string): boolean => {
+  if (ip.startsWith("127.") || ip.startsWith("10.") || ip.startsWith("0.")) {
+    return true;
+  }
+  if (ip.startsWith("192.168.") || ip.startsWith("169.254.")) {
+    return true;
+  }
+  if (ip.startsWith("172.")) {
+    const parts = ip.split(".");
+    if (parts.length >= 2) {
+      const secondOctet = parseInt(parts[1], 10);
+      if (secondOctet >= 16 && secondOctet <= 31) {
+        return true;
+      }
+    }
+  }
+  if (ip === "::1" || ip === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  const ipLower = ip.toLowerCase();
+  if (ipLower.startsWith("fe80:") || ipLower.startsWith("fc00:") || ipLower.startsWith("fd00:")) {
+    return true;
+  }
+  return false;
+};
+
 const getMimeType = (buf: Buffer, filename: string): string => {
   if (buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) {
     return "application/pdf";
-  }
-  // PNG: 89 50 4E 47 0D 0A 1A 0A
-  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
-    return "image/png";
-  }
-  // JPEG: FF D8 FF
-  if (buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
-    return "image/jpeg";
-  }
-  // WEBP: RIFF....WEBP
-  if (buf.length >= 12 &&
-    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) {
-    return "image/webp";
   }
 
   // Fallback to filename extension
   const ext = filename.toLowerCase().split(".").pop();
   if (ext === "pdf") return "application/pdf";
-  if (ext === "png") return "image/png";
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
-  if (ext === "webp") return "image/webp";
 
   return "";
-};
-
-// Helper to check if PDF is password-protected (encrypted)
-const isPdfEncrypted = (buf: Buffer): boolean => {
-  const str = buf.toString("binary");
-  return str.includes("/Encrypt");
 };
 
 // Helper to sanitize filenames to prevent path traversal or injection
@@ -80,6 +85,30 @@ export async function POST(request: NextRequest) {
             const trimmedUrl = pdf_url.trim();
             if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
               sendEvent({ type: "error", message: "Invalid URL. Must start with http:// or https://" });
+              controller.close();
+              return;
+            }
+
+            // SSRF Sanitization: Resolve hostname and check IP ranges
+            try {
+              const parsedUrl = new URL(trimmedUrl);
+              const hostname = parsedUrl.hostname;
+              const lookupResult = await dns.promises.lookup(hostname);
+              const ipAddress = lookupResult.address;
+
+              if (isPrivateIp(ipAddress)) {
+                sendEvent({
+                  type: "error",
+                  message: "Security error: Fetching from private or local network IP addresses is not allowed.",
+                });
+                controller.close();
+                return;
+              }
+            } catch (dnsErr) {
+              sendEvent({
+                type: "error",
+                message: "Security error: Invalid URL or failed to resolve host address.",
+              });
               controller.close();
               return;
             }
@@ -132,9 +161,9 @@ export async function POST(request: NextRequest) {
               return;
             }
 
-            // Verify size limit for direct upload (Vercel limit safety, 4.5MB payload limit)
-            if (buffer.length > 4.5 * 1024 * 1024) {
-              sendEvent({ type: "error", message: "Uploaded PDF exceeds Vercel's 4.5MB limit. Please use the URL option instead." });
+            // Verify size limit for direct upload (safe for Render memory limits, 20MB limit)
+            if (buffer.length > 20 * 1024 * 1024) {
+              sendEvent({ type: "error", message: "Uploaded PDF exceeds the 20MB limit." });
               controller.close();
               return;
             }
@@ -155,7 +184,8 @@ export async function POST(request: NextRequest) {
             return;
           }
 
-          if (isPdfEncrypted(buffer)) {
+          const encryptionCheck = await isEncrypted(new Uint8Array(buffer));
+          if (encryptionCheck.encrypted) {
             sendEvent({
               type: "error",
               message: "This PDF is password-protected (encrypted). Please remove the password protection or decrypt the file before uploading.",
@@ -207,16 +237,8 @@ export async function POST(request: NextRequest) {
           const wordMatches = pdfTextContent.match(/[a-zA-Z]{4,}/g);
           const textWordCount = wordMatches ? wordMatches.length : 0;
 
-          let preferredModel = "gemini-2.5-flash";
-          let routingReason = "";
-
-          if (textWordCount < 150) {
-            preferredModel = "gemini-3.5-flash";
-            routingReason = "Scanned document or ID card detected. Assigning to Gemini 3.5 Flash for advanced visual OCR.";
-          } else {
-            preferredModel = "gemini-2.5-flash";
-            routingReason = "Text-rich document detected. Assigning to Gemini 2.5 Flash to optimize processing.";
-          }
+          let preferredModel = "gemini-3.5-flash";
+          let routingReason = "Assigning to Gemini 3.5 Flash for advanced multimodal document analysis.";
 
           sendEvent({ type: "status", message: routingReason });
           await new Promise((r) => setTimeout(r, 800)); // short pause for visual confirmation
@@ -235,7 +257,7 @@ export async function POST(request: NextRequest) {
 
           // Build trial order: preferred model first, then fallbacks
           const modelsToTry = [preferredModel];
-          const allModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
+          const allModels = ["gemini-3.5-flash", "gemini-3.1-flash-lite"];
           for (const m of allModels) {
             if (!modelsToTry.includes(m)) {
               modelsToTry.push(m);
@@ -365,18 +387,20 @@ Generate a single, valid JSON object matching the requested schema. Ensure all f
               break;
             } catch (err: any) {
               const errMsg = err.message || String(err);
-              const isQuotaOrServerErr =
+              const isRecoverableErr =
                 errMsg.includes("429") ||
                 errMsg.includes("503") ||
+                errMsg.includes("404") ||
                 errMsg.includes("quota") ||
                 errMsg.includes("limit") ||
+                errMsg.includes("not found") ||
                 errMsg.includes("Service Unavailable") ||
                 errMsg.includes("Too Many Requests");
 
-              if (isQuotaOrServerErr && modelName !== modelsToTry[modelsToTry.length - 1]) {
+              if (isRecoverableErr && modelName !== modelsToTry[modelsToTry.length - 1]) {
                 sendEvent({
                   type: "status",
-                  message: `${modelName} experienced limit/quota restrictions. Retrying with fallback model...`,
+                  message: `${modelName} returned an error. Retrying with fallback model...`,
                 });
                 continue;
               } else {

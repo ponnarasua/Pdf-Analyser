@@ -52,7 +52,7 @@ export default function MetadataPanel({ result }: MetadataPanelProps) {
               <Icon className="w-3.5 h-3.5" />
               <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
             </div>
-            <span className="text-white text-sm font-medium truncate" title={value}>
+            <span className="text-white text-sm font-medium break-words" title={value}>
               {value}
             </span>
           </div>

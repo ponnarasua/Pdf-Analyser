@@ -1,4 +1,4 @@
-# PDF.insight
+# PDF-Analyser
 
 AI-powered PDF analyser — paste any public PDF URL and get a structured, multi-faceted analysis instantly.
 

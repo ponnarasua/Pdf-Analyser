@@ -42,8 +42,8 @@ export default function Home() {
       setLocalFileError("Format error: Only standard PDF files (.pdf) are supported.");
       return;
     }
-    if (file.size > 4.5 * 1024 * 1024) {
-      setLocalFileError("Size limit exceeded: Direct uploads are limited to 4MB (due to Vercel body limits). For larger files, please paste a public URL.");
+    if (file.size > 20 * 1024 * 1024) {
+      setLocalFileError("Size limit exceeded: Direct uploads are limited to 20MB. For larger files, please paste a public URL.");
       return;
     }
     setSelectedFile(file);
@@ -91,13 +91,13 @@ export default function Home() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-violet-600/8 rounded-full blur-[120px]" />
       </div>
 
-      <div className="relative max-w-6xl mx-auto px-4 py-10 flex flex-col gap-8">
+      <div className="relative w-full px-4 sm:px-6 md:px-8 lg:px-12 py-10 flex flex-col gap-8">
         {/* Header */}
         <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
               <span className="text-3xl font-black tracking-tight bg-gradient-to-r from-indigo-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
-                PDF.insight
+                PDF-Analyser
               </span>
               <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 tracking-wider uppercase">
                 Gemini AI
@@ -265,7 +265,7 @@ export default function Home() {
                       Drag & drop your PDF file here, or <span className="text-indigo-400 hover:underline">browse files</span>
                     </p>
                     <p className="text-xs text-slate-500 mt-1">
-                      PDF files only (Max size: 4MB due to serverless payload limits)
+                      PDF files only (Max size: 20MB)
                     </p>
                   </div>
                 </div>
@@ -376,6 +376,7 @@ export default function Home() {
             {/* Meta stats details */}
             <MetadataPanel result={result} />
 
+
             {/* Tables of Contents structure */}
             {result.toc && result.toc.length > 0 && <TocPanel toc={result.toc} />}
 
@@ -420,7 +421,7 @@ export default function Home() {
         )}
 
         <footer className="pt-4 border-t border-white/5 text-center text-xs text-slate-700">
-          PDF.insight v3 · Unified Next.js + Gemini 3.5 Flash
+          PDF-Analyser v3 · Unified Next.js + Gemini 3.5 Flash
         </footer>
       </div>
     </div>
