@@ -4,73 +4,53 @@ AI-powered PDF analyser — paste any public PDF URL and get a structured, multi
 
 ## Architecture
 
-```
-frontend/   Next.js 15 + Tailwind + TypeScript   (Vercel)
-backend/    FastAPI + PyMuPDF + pdfplumber        (Render / local)
-```
+This application is built as a modern full-stack web application using Next.js, eliminating the need for a separate Python backend.
+
+- **Framework:** Next.js (App Router)
+- **Styling:** Tailwind CSS + Lucide React
+- **Language:** TypeScript
+- **PDF Processing:** `pdf-lib` and `@pdfsmaller/pdf-decrypt`
+- **AI Integration:** Google Gemini API (`@google/generative-ai`)
 
 ## Local Development
 
-### 1. Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-Create a `.env` file in `backend/`:
-```
-GEMINI_API_KEY=your_gemini_key_here
-```
-
-Start the server:
-```bash
-uvicorn main:app --reload
-```
-
-Backend runs at: `http://localhost:8000`
-
-### 2. Frontend
+### 1. Install Dependencies
 
 ```bash
 npm install
 ```
 
-Create a `.env.local` file in the root:
-```
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
-GEMINI_API_KEY=your_gemini_key_here  # (used by legacy /api/analyze route)
+### 2. Configure Environment Variables
+
+Create a `.env.local` file in the root directory and add your Gemini API key:
+
+```env
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
-Start the dev server:
+### 3. Start the Development Server
+
 ```bash
 npm run dev
 ```
 
-Frontend runs at: `http://localhost:3000`
+The application will be available at: `http://localhost:3000`
 
 ## Features
 
-- 📥 Server-side PDF download and extraction
+- 📥 Server-side PDF downloading and parsing via Next.js API routes
 - 🧠 Document classification (Research Paper, Resume, Invoice, etc.)
-- 📄 Full text extraction with PyMuPDF
-- 🖼️ Image detection and AI-described visual insights
-- 📊 Table detection and key findings extraction
-- 📑 TOC reconstruction from PDF structure
-- 🔀 Smart chunking strategy for large documents
+- 📄 Text extraction and structural analysis
 - ⏱️ Reading time & difficulty estimation
-- 🔑 Keywords and main topics
-- 🎯 Key takeaway and 2-3 sentence summary
-- 📡 Real-time Server-Sent Events (SSE) step progress
-- 🛡️ API key never exposed to the browser
+- 🔑 Keywords and main topics extraction
+- 🎯 Key takeaway and concise summaries
+- 🛡️ API key securely stored on the server, never exposed to the browser
 
 ## Deployment
 
-### Frontend → Vercel
-Push to GitHub and import the repo on [vercel.com](https://vercel.com).
-Set env var `NEXT_PUBLIC_BACKEND_URL` to your deployed backend URL.
+The easiest way to deploy this application is on [Vercel](https://vercel.com).
 
-### Backend → Render
-Create a new Web Service, point to `backend/` folder.
-Set env var `GEMINI_API_KEY`.
-Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+1. Push your code to GitHub.
+2. Import the repository in your Vercel dashboard.
+3. Add `GEMINI_API_KEY` to your Vercel Environment Variables.
+4. Click **Deploy**.
