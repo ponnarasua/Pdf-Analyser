@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 export const dynamic = "force-dynamic";
 
@@ -194,6 +194,7 @@ Extract:
 - tableInsights: up to 5 insights about tables/data present (if any, else empty list)
 - difficulty: "Beginner", "Intermediate", or "Advanced" based on readability
 - estimatedReadingTime: estimate based on length (e.g. '12 min')
+- wordCount: estimate of the total word count of the document (integer)
 - documentType: The category of document (e.g. Research Paper, Technical Report, Article, Invoice, User Manual, Resume, Slide Deck, Book Chapter, etc.)`;
 
           const result = await model.generateContent({
@@ -215,6 +216,53 @@ Extract:
             ],
             generationConfig: {
               responseMimeType: "application/json",
+              responseSchema: {
+                type: SchemaType.OBJECT,
+                properties: {
+                  title: { type: SchemaType.STRING },
+                  authors: { type: SchemaType.STRING },
+                  summary: { type: SchemaType.STRING },
+                  keyTakeaway: { type: SchemaType.STRING },
+                  keywords: {
+                    type: SchemaType.ARRAY,
+                    items: { type: SchemaType.STRING },
+                  },
+                  mainTopics: {
+                    type: SchemaType.ARRAY,
+                    items: { type: SchemaType.STRING },
+                  },
+                  imageInsights: {
+                    type: SchemaType.ARRAY,
+                    items: { type: SchemaType.STRING },
+                  },
+                  tableInsights: {
+                    type: SchemaType.ARRAY,
+                    items: { type: SchemaType.STRING },
+                  },
+                  difficulty: {
+                    type: SchemaType.STRING,
+                    format: "enum",
+                    enum: ["Beginner", "Intermediate", "Advanced"],
+                  },
+                  estimatedReadingTime: { type: SchemaType.STRING },
+                  wordCount: { type: SchemaType.INTEGER },
+                  documentType: { type: SchemaType.STRING },
+                },
+                required: [
+                  "title",
+                  "authors",
+                  "summary",
+                  "keyTakeaway",
+                  "keywords",
+                  "mainTopics",
+                  "imageInsights",
+                  "tableInsights",
+                  "difficulty",
+                  "estimatedReadingTime",
+                  "wordCount",
+                  "documentType",
+                ],
+              },
             },
           });
 
@@ -235,11 +283,25 @@ Extract:
             parsedData = JSON.parse(raw);
           }
 
+          // Compute metadata word count robustly
+          let wordCountVal = 0;
+          if (parsedData.wordCount !== undefined && parsedData.wordCount !== null) {
+            if (typeof parsedData.wordCount === "number") {
+              wordCountVal = Math.round(parsedData.wordCount);
+            } else if (typeof parsedData.wordCount === "string") {
+              wordCountVal = parseInt(parsedData.wordCount.replace(/[^0-9]/g, ""), 10) || 0;
+            }
+          }
+          if (wordCountVal <= 0 && pageCount > 0) {
+            wordCountVal = pageCount * 400; // estimate average 400 words per page as fallback
+          }
+
           // Complete metadata updates
           const finalMetadata = {
             title: parsedData.title || "Unknown",
             author: parsedData.authors || "Unknown",
             pages: pageCount,
+            word_count: wordCountVal,
             total_images: parsedData.imageInsights?.length || 0,
             total_tables: parsedData.tableInsights?.length || 0,
             estimated_reading_time: parsedData.estimatedReadingTime || `${Math.ceil(pageCount * 2)} min`,
