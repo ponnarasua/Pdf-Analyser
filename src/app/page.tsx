@@ -99,7 +99,7 @@ export default function Home() {
                 PDF.insight
               </span>
               <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 tracking-wider uppercase">
-                Gemini 2.5 Flash
+                Gemini 3.5 Flash
               </span>
             </div>
             <p className="text-sm text-slate-500 max-w-md">
@@ -414,7 +414,7 @@ export default function Home() {
         )}
 
         <footer className="pt-4 border-t border-white/5 text-center text-xs text-slate-700">
-          PDF.insight v3 · Unified Next.js + Gemini 2.5 Flash
+          PDF.insight v3 · Unified Next.js + Gemini 3.5 Flash
         </footer>
       </div>
     </div>
