@@ -30,6 +30,7 @@ export interface AnalysisResult {
   tableInsights: string[];
   toc: TocEntry[];
   metadata: DocumentMetadata;
+  additionalInsights: string[];
 }
 
 export type StepStatus = "pending" | "active" | "done" | "error";

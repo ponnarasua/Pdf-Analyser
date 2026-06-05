@@ -195,7 +195,8 @@ Extract:
 - difficulty: "Beginner", "Intermediate", or "Advanced" based on readability
 - estimatedReadingTime: estimate based on length (e.g. '12 min')
 - wordCount: estimate of the total word count of the document (integer)
-- documentType: The category of document (e.g. Research Paper, Technical Report, Article, Invoice, User Manual, Resume, Slide Deck, Book Chapter, etc.)`;
+- documentType: The category of document (e.g. Research Paper, Technical Report, Article, Invoice, User Manual, Resume, Slide Deck, Book Chapter, etc.)
+- additionalInsights: list of up to 5 additional interesting, unique, or extra findings/observations in the document (such as funding notes, future work, limitations, specific dataset links, or unique historical context) that are not covered in other sections. Return an empty list if none.`;
 
           const result = await model.generateContent({
             contents: [
@@ -247,6 +248,10 @@ Extract:
                   estimatedReadingTime: { type: SchemaType.STRING },
                   wordCount: { type: SchemaType.INTEGER },
                   documentType: { type: SchemaType.STRING },
+                  additionalInsights: {
+                    type: SchemaType.ARRAY,
+                    items: { type: SchemaType.STRING },
+                  },
                 },
                 required: [
                   "title",
@@ -261,6 +266,7 @@ Extract:
                   "estimatedReadingTime",
                   "wordCount",
                   "documentType",
+                  "additionalInsights",
                 ],
               },
             },
@@ -322,6 +328,7 @@ Extract:
             tableInsights: parsedData.tableInsights || [],
             toc: [],
             metadata: finalMetadata,
+            additionalInsights: parsedData.additionalInsights || [],
           };
 
           sendEvent({ type: "step", step: "AI Analysis", status: "done" });

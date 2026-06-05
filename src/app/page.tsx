@@ -11,6 +11,7 @@ import TocPanel from "@/components/analysis/TocPanel";
 import VisualInsights from "@/components/analysis/VisualInsights";
 import TableInsights from "@/components/analysis/TableInsights";
 import KeywordsPanel from "@/components/analysis/KeywordsPanel";
+import AdditionalInsights from "@/components/analysis/AdditionalInsights";
 
 import { Search, Zap, ExternalLink, FileText, RotateCcw, Upload, Link2, X, AlertCircle } from "lucide-react";
 
@@ -389,6 +390,11 @@ export default function Home() {
                 tableInsights={result.tableInsights}
               />
             </div>
+
+            {/* Additional highlights list */}
+            {result.additionalInsights && result.additionalInsights.length > 0 && (
+              <AdditionalInsights insights={result.additionalInsights} />
+            )}
 
             {/* Tag chip lists */}
             <KeywordsPanel
