@@ -43,36 +43,9 @@ This project is suitable as a portfolio piece — it demonstrates full-stack eng
 
 ### Architecture Diagram
 
-```mermaid
-flowchart LR
-  U[User Browser] --> F[Next.js Frontend<br/>`src/app/page.tsx`]
-  F --> H[`useAnalysis` Hook<br/>`src/hooks/useAnalysis.ts`]
-  H --> A[`streamAnalysis`<br/>`src/lib/api.ts`]
-  A --> S[/Server Route: /api/v1/analyze<br/>`src/app/api/v1/analyze/route.ts`]
-
-  subgraph ServerFlow [Server-side analysis flow]
-    S --> D[DNS lookup & SSRF checks]
-    S --> DL[Download remote PDF or decode<br/>`pdf_base64` payload]
-    S --> V[Validation: magic-bytes, size, encryption]
-    S --> G[Gemini AI (`@google/generative-ai`)]
-    G --> P[Generate structured JSON
-    (AnalysisResult schema)]
-    P --> SSE[SSE: stream steps & final result]
-  end
-
-  SSE --> F
-
-  DL -->|URL| R[Remote PDF URL]
-  DL -->|Upload| UPL[`pdf_base64` upload payload]
-
-  subgraph Config
-    K[GEMINI_API_KEY]
-    B[BACKEND_URL]
-  end
-
-  G --- K
-  A --- B
-```
+<p align="center">
+  <img src="images/homepage.png" alt="PDF Analyser" width="800">
+</p>
 
 Core file references:
 
