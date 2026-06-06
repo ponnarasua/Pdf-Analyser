@@ -43,9 +43,7 @@ This project is suitable as a portfolio piece — it demonstrates full-stack eng
 
 ### Architecture Diagram
 
-<p align="center">
-  <img src="images/homepage.png" alt="PDF Analyser" width="800">
-</p>
+  <img src="Architecture_Diagram.png" alt="PDF Analyser">
 
 Core file references:
 
